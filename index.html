@@ -1384,30 +1384,45 @@ const baseName=f=>f.replace(/^.*[\\/]/,'').replace(/\.(csv|json|geojson|kml)$/i,
 function parseAny(fname,text){if(/\.csv$/i.test(fname)){const l=listFromCSV(baseName(fname),text);return l?[l]:[]}
  if(/\.(geo)?json$/i.test(fname)){const l=listFromJSON(baseName(fname)==='Saved Places'?'Starred places':baseName(fname),text);return l?[l]:[]}
  if(/\.kml$/i.test(fname))return listsFromKML(baseName(fname),text);return[]}
-function loadJSZip(){return window.JSZip?Promise.resolve(window.JSZip):new Promise((ok,no)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';s.onload=()=>ok(window.JSZip);s.onerror=()=>no(new Error('zip'));document.head.appendChild(s)})}
-async function gmFiles(files){gmShow('<p>Reading…</p>');const lists=[];
- try{for(const f of files){if(/\.zip$/i.test(f.name)){const JSZip=await loadJSZip(),z=await JSZip.loadAsync(f);
-    const ents=Object.values(z.files).filter(e=>!e.dir&&/\.(csv|json|geojson|kml)$/i.test(e.name)&&(/\/Saved\//i.test('/'+e.name)||/Saved Places\.json$/i.test(e.name)||/\.kml$/i.test(e.name)));
-    for(const e of ents)lists.push(...parseAny(e.name,await e.async('string')))}
-   else lists.push(...parseAny(f.name,await f.text()))}}catch(e){return gmShow(`<p class="ioerr">Could not read that file${/zip/.test(e.message)?' (the zip reader did not load; unzip it and pick the .csv instead)':''}.</p><div class="bacts"><button class="btn sm" data-gm="close">OK</button></div>`)}
+function loadJSZip(){return window.JSZip?Promise.resolve(window.JSZip):new Promise((ok,no)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';s.onload=()=>ok(window.JSZip);s.onerror=()=>no(new Error('Could not load the zip reader (check the internet connection)'));document.head.appendChild(s)})}
+const withTimeout=(p,ms,what)=>Promise.race([p,new Promise((_,no)=>setTimeout(()=>no(new Error(what+' timed out')),ms))]);
+const mb=n=>(n/1048576).toFixed(n<1048576?2:1)+' MB';
+function gmStep(t){gmShow(`<p>${t}</p><div class="bacts"><button class="btn sm" data-gm="close">Cancel</button></div>`)}
+async function gmFiles(files){const run=++gmRun,lists=[],skipped=[];
+ try{for(const f of files){if(run!==gmRun)return;
+   if(/\.zip$/i.test(f.name)){gmStep(`Opening <b>${esc(f.name)}</b> (${mb(f.size)})…`);
+    const JSZip=await withTimeout(loadJSZip(),20000,'Loading the zip reader');
+    const z=await withTimeout(JSZip.loadAsync(f),90000,'Opening the zip');if(run!==gmRun)return;
+    const all=Object.values(z.files).filter(e=>!e.dir&&/\.(csv|json|geojson|kml)$/i.test(e.name));
+    const size=e=>(e._data&&e._data.uncompressedSize)||0;
+    const pref=e=>/\/(Saved|שמורים)\//i.test('/'+e.name)||/Saved Places|מקומות/i.test(e.name)||/\.kml$/i.test(e.name);
+    let ents=all.filter(pref);if(!ents.length)ents=all;
+    ents=ents.filter(e=>{if(size(e)>8*1048576){skipped.push(e.name.split('/').pop());return false}return true});
+    for(let k=0;k<ents.length;k++){if(run!==gmRun)return;gmStep(`Reading list ${k+1} of ${ents.length}: <b>${esc(ents[k].name.split('/').pop())}</b>`);
+     lists.push(...parseAny(ents[k].name,await withTimeout(ents[k].async('string'),30000,'Reading '+ents[k].name)))}}
+   else{if(f.size>8*1048576){skipped.push(f.name);continue}gmStep(`Reading <b>${esc(f.name)}</b>…`);lists.push(...parseAny(f.name,await f.text()))}}}
+ catch(e){if(run!==gmRun)return;return gmShow(`<p class="ioerr">${esc(e.message||'Could not read that file')}.</p><p class="smute">Tip: in Google Takeout select only “Saved” (and “Maps (your places)”), or unzip the file and pick the list's .csv directly.</p><div class="bacts"><button class="btn sm pri" data-gm="pick">Choose another file</button><button class="btn sm" data-gm="close">Close</button></div>`)}
+ if(run!==gmRun)return;
  gmLists=lists.filter(l=>l.items.length).map((l,i)=>({...l,on:true,id:i}));
- if(!gmLists.length)return gmShow(`<p class="ioerr">No Google Maps places found in that file.</p><p class="smute">Use a Takeout list (.csv from the “Saved” folder), Saved Places.json, a My Maps .kml, or the whole Takeout .zip.</p><div class="bacts"><button class="btn sm" data-gm="close">OK</button></div>`);
+ const skipNote=skipped.length?`<p class="smute">Skipped ${skipped.length} large file${skipped.length>1?'s':''} that are not lists (${skipped.slice(0,3).map(esc).join(', ')}${skipped.length>3?'…':''}).</p>`:'';
+ if(!gmLists.length)return gmShow(`<p class="ioerr">No Google Maps places found in that file.</p>${skipNote}<p class="smute">Use a Takeout list (.csv from the “Saved” folder), Saved Places.json, a My Maps .kml, or the Takeout .zip.</p><div class="bacts"><button class="btn sm pri" data-gm="pick">Choose another file</button><button class="btn sm" data-gm="close">Close</button></div>`);
  if(gmLists.length===1)return gmBuild();
- gmShow(`<p><b>Found ${gmLists.length} lists.</b> Pick the ones to import:</p>${gmLists.map(l=>`<label class="glist"><input type="checkbox" data-gl="${l.id}" checked> ${esc(l.name)} <span class="smute">${l.items.length} place${l.items.length===1?'':'s'}</span></label>`).join('')}
+ gmShow(`<p><b>Found ${gmLists.length} lists.</b> Pick the ones to import:</p>${skipNote}${gmLists.map(l=>`<label class="glist"><input type="checkbox" data-gl="${l.id}" checked> ${esc(l.name)} <span class="smute">${l.items.length} place${l.items.length===1?'':'s'}</span></label>`).join('')}
   <div class="bacts"><button class="btn sm pri" data-gm="build">Continue</button><button class="btn sm" data-gm="close">Cancel</button></div>`)}
 function nearCountry(ll){const nn=nearest(ll.lat,ll.lon);return nn&&nn.d<80?nn.c:null}
 function gmBuild(){const run=++gmRun,lists=gmLists.filter(l=>l.on);gmTarget=lists.length>1?'__perlist':'__new';
  gmItems=lists.flatMap(l=>l.items.map(it=>{let cands=[];if(it.ll){const nc=nearCountry(it.ll);cands=[{n:it.title||(nc?'Spot near '+nc.n:'Pinned spot'),c:nc?nc.c:'',lat:+it.ll.lat.toFixed(5),lon:+it.ll.lon.toFixed(5),place:1,sub:nc?regionName(nc.c):'exact spot'}]}
   return{q:it.title||'Pinned spot',note:it.note,list:l.name,cands,sel:0,on:!!cands.length,busy:!cands.length,exact:!!it.ll}}));
  renderGM();gmShow($('gm').innerHTML);gmResolve(run)}
-async function gmResolve(run){const known=gmItems.filter(x=>x.cands.length).map(x=>x.cands[0]);
- for(const x of gmItems){if(run!==gmRun)return;if(x.cands.length)continue;
-  let c=[];if(window.STANDALONE){const b=known.length?known.reduce((a,k)=>({lat:a.lat+k.lat/known.length,lon:a.lon+k.lon/known.length}),{lat:0,lon:0}):null;
-   try{const j=await (await fetch('https://photon.komoot.io/api/?limit=3&lang=en&q='+encodeURIComponent(x.q)+(b?`&lat=${b.lat.toFixed(3)}&lon=${b.lon.toFixed(3)}`:''))).json();
-    c=(j.features||[]).map(f=>{const p=f.properties,[lon,lat]=f.geometry.coordinates,nm=p.name||p.street||x.q;return{n:x.q||nm,sub:[nm!==x.q?nm:'',p.city&&p.city!==nm?p.city:'',p.country].filter(Boolean).join(', '),c:(p.countrycode||'').toUpperCase(),lat:+(+lat).toFixed(5),lon:+(+lon).toFixed(5),place:1}})}catch(e){}
-   await new Promise(r=>setTimeout(r,250))}
-  if(!c.length){const k=norm(x.q),m=cities.find(ct=>ct.k===k);if(m)c=[m]}
-  if(run!==gmRun)return;x.cands=c;x.on=c.length>0;x.busy=false;if(c[0])known.push(c[0]);renderGM()}}
+async function gmLookup(x,known){let c=[];
+ if(window.STANDALONE){const b=known.length?known.reduce((a,k)=>({lat:a.lat+k.lat/known.length,lon:a.lon+k.lon/known.length}),{lat:0,lon:0}):null;
+  try{const j=await withTimeout(fetch('https://photon.komoot.io/api/?limit=3&lang=en&q='+encodeURIComponent(x.q)+(b?`&lat=${b.lat.toFixed(3)}&lon=${b.lon.toFixed(3)}`:'')).then(r=>r.json()),12000,'search');
+   c=(j.features||[]).map(f=>{const p=f.properties,[lon,lat]=f.geometry.coordinates,nm=p.name||p.street||x.q;return{n:x.q||nm,sub:[nm!==x.q?nm:'',p.city&&p.city!==nm?p.city:'',p.country].filter(Boolean).join(', '),c:(p.countrycode||'').toUpperCase(),lat:+(+lat).toFixed(5),lon:+(+lon).toFixed(5),place:1}})}catch(e){}}
+ if(!c.length){const k=norm(x.q),m=cities.find(ct=>ct.k===k);if(m)c=[m]}return c}
+async function gmResolve(run){const known=gmItems.filter(x=>x.cands.length).map(x=>x.cands[0]),queue=gmItems.filter(x=>!x.cands.length);let last=0;
+ const worker=async()=>{while(queue.length){if(run!==gmRun)return;const x=queue.shift(),c=await gmLookup(x,known);if(run!==gmRun)return;
+  x.cands=c;x.on=c.length>0;x.busy=false;if(c[0])known.push(c[0]);if(Date.now()-last>300||!queue.length){last=Date.now();renderGM()}}};
+ await Promise.all([worker(),worker(),worker()]);if(run===gmRun)renderGM()}
 function renderGM(){const G=trip().groups,lists=[...new Set(gmItems.map(x=>x.list))],n=gmItems.filter(x=>x.on&&x.cands.length).length,busy=gmItems.filter(x=>x.busy).length,miss=gmItems.filter(x=>!x.busy&&!x.cands.length).length;
  const tgt=`<select class="gsel gmt" aria-label="Import into">${lists.length>1?`<option value="__perlist"${gmTarget==='__perlist'?' selected':''}>A new group per list</option>`:''}<option value="__new"${gmTarget==='__new'?' selected':''}>New group “${esc(lists[0]||'Imported')}”</option>${G.map(g=>`<option value="${g.id}"${gmTarget===g.id?' selected':''}>${esc(g.name)}</option>`).join('')}</select>`;
  gmPaint(`<p><b>${gmItems.length} place${gmItems.length===1?'':'s'}</b> from ${lists.map(esc).join(', ')}${busy?` · <span class="smute">finding ${busy}…</span>`:''}${miss?` · <span class="ioerr">${miss} not found</span>`:''}</p>
