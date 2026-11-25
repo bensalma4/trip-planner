@@ -1358,7 +1358,7 @@ $('q').addEventListener('blur',()=>setTimeout(()=>{hits=[];showRes()},150));
 /* ---------- import from Google Maps (Takeout CSV / Saved Places.json / My Maps KML / Takeout zip) ---------- */
 let gmLists=[],gmItems=[],gmTarget='__perlist',gmRun=0;
 function gmPaint(html){const p=$('gm');p.innerHTML=html;p.hidden=!html}
-function gmShow(html){gmPaint(html);if(html){if(isMobile()){setSheet('full');document.querySelector('.panel .body').scrollTop=0}else p.scrollIntoView({block:'nearest',behavior:'smooth'})}}
+function gmShow(html){gmPaint(html);if(html){if(isMobile()){setSheet('full');document.querySelector('.panel .body').scrollTop=0}else $('gm').scrollIntoView({block:'nearest',behavior:'smooth'})}}
 function parseCSV(t){const rows=[];let row=[],f='',q=false;t=t.replace(/^﻿/,'');
  for(let i=0;i<t.length;i++){const ch=t[i];if(q){if(ch==='"'){if(t[i+1]==='"'){f+='"';i++}else q=false}else f+=ch}
   else if(ch==='"')q=true;else if(ch===','){row.push(f);f=''}else if(ch==='\n'||ch==='\r'){if(ch==='\r'&&t[i+1]==='\n')i++;row.push(f);rows.push(row);row=[];f=''}else f+=ch}
