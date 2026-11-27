@@ -968,7 +968,7 @@ body{font-size:14px}
   .gbar{width:44px;height:5px;border-radius:3px;background:var(--mute);opacity:.5}
   .grab>span:first-child,.grab .gbar{justify-self:center}
   .gmini{justify-self:start!important;font:600 13px Inter,sans-serif;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;opacity:0;transition:opacity .2s}
-  .panel[data-sheet=min] .gmini,.panel[data-sheet=drag] .gmini{opacity:1}
+  .grab .gmini{opacity:0}.panel[data-sheet=min] .grab .gmini,.panel[data-sheet=drag] .grab .gmini{opacity:1}
   .grab .gmini,.grab .gbtns{width:auto;height:auto;background:none;border-radius:0}.grab .gbtns{opacity:1}
   .gbtns{justify-self:end;display:flex}.gbtns .ib{width:36px;height:36px;font-size:18px;color:var(--mute)}
   .panel[data-sheet=full]{border-radius:0}
@@ -979,6 +979,10 @@ body{font-size:14px}
 @media(prefers-reduced-motion:reduce){.pin.moving{animation:none}}
 .gfix{display:flex;gap:6px;margin-top:4px}.gfix .gq{flex:1;min-width:0;font:14px Inter,sans-serif;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
 @media(max-width:800px){.gfix .gq{font-size:16px}}
+.porder{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 8px;padding:6px 8px;background:var(--soft);border-radius:10px}
+.pos{display:flex;align-items:center;gap:2px}.pos .ib{width:32px;height:32px;font-size:20px}.pos .ib:disabled{opacity:.25}
+.pos .badge{width:26px;height:26px;font-size:12px}
+.pgl{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--mute);min-width:0;flex:1}.pgl .gsel{flex:1;max-width:none;margin:0}
 </style>
 </head>
 <body>
@@ -1179,7 +1183,8 @@ function initMap(){
 }
 function initCard(){const el=card;$('map').appendChild(el);L.DomEvent.disableClickPropagation(el);L.DomEvent.disableScrollPropagation(el);
   el.addEventListener('click',ev=>{const b=ev.target.closest('[data-pa]');if(!b)return;if(b.dataset.pa==='close'){setTimeout(closeCard,0);return}setTimeout(()=>popAction(b.dataset.pa,b),0)});
-  el.addEventListener('change',ev=>{if(ev.target.classList.contains('osel')&&offer){offer.gid=ev.target.value;setTimeout(()=>{popup.setContent(offerHtml());const n=card.querySelector('.ngname');if(n){n.focus();n.select()}},0)}});
+  el.addEventListener('change',ev=>{if(ev.target.classList.contains('pgsel')&&infoFor){const p=infoFor,f=findP(p),tg=grp(ev.target.value);if(f&&tg&&tg!==f.g){moveStop(f.g,f.i,tg,tg.stops.length);render();setTimeout(()=>popup.setContent(infoHtml(p,wikiCache[p.n+p.lat])),0);toast(`Moved to ${tg.name}`)}return}
+  if(ev.target.classList.contains('osel')&&offer){offer.gid=ev.target.value;setTimeout(()=>{popup.setContent(offerHtml());const n=card.querySelector('.ngname');if(n){n.focus();n.select()}},0)}});
   el.addEventListener('input',ev=>{if(ev.target.classList.contains('rq'))replSearch(ev.target.value);if(ev.target.classList.contains('ngname')&&offer)offer.newName=ev.target.value});
   el.addEventListener('keydown',ev=>{if(ev.target.classList.contains('ngname')&&ev.key==='Enter'){ev.preventDefault();commitOffer(false)}});
   el.addEventListener('keydown',ev=>{if(ev.target.classList.contains('rq')&&ev.key==='Enter'){ev.preventDefault();const f=el.querySelector('[data-pa=pick]');if(f)popAction('pick',f)}})}
@@ -1247,9 +1252,11 @@ function stopRef(p){const f=findP(p);if(!f)return null;const multi=trip().groups
 function infoHtml(p,w){const r=stopRef(p);if(!r)return'';const nn=nearest(p.lat,p.lon),city=nn&&nn.d<3&&nn.c.n===p.n?nn.c:null;
  const facts=[r.lab+(p.c?' · '+regionName(p.c):''),city?'Population ~'+(city.p>=1e6?(city.p/1e6).toFixed(1)+'M':Math.round(city.p/1e3)+'k'):'',
   r.og?`${fmtKm(dist(r.og.o,p))} km from ${r.og.lab==='Home'?'home':r.og.lab}`:'',`${p.lat.toFixed(4)}, ${p.lon.toFixed(4)}`].filter(Boolean);
- const q=encodeURIComponent(p.n+(p.c?' '+regionName(p.c):''));const isHome=findP(p).i<0;
+ const q=encodeURIComponent(p.n+(p.c?' '+regionName(p.c):''));const fp=findP(p),isHome=fp.i<0,G=trip().groups,flat=G.flatMap(g=>g.stops);
+ const order=isHome?'':`<div class="porder"><span class="pos"><button class="ib" data-pa="earlier" aria-label="Move earlier" ${flat[0]===p?'disabled':''}>‹</button><span class="badge" style="background:${gcol(fp.g)}">${lab(p)}</span><button class="ib" data-pa="later" aria-label="Move later" ${flat[flat.length-1]===p?'disabled':''}>›</button></span>
+  <label class="pgl">Group <select class="pgsel gsel" aria-label="Move to group">${G.map(g=>`<option value="${g.id}"${g===fp.g?' selected':''}>${esc(g.name)}</option>`).join('')}</select></label></div>`;
  let sum='';if(window.STANDALONE){if(!w)sum='<p class="pmute">Loading summary…</p>';else if(w.extract)sum=`${w.thumb?`<img class="pimg" src="${esc(w.thumb)}" alt="">`:''}<p class="psum">${esc(w.extract.length>320?w.extract.slice(0,320).replace(/\s\S*$/,'')+'…':w.extract)}</p><a class="plink" href="${esc(w.url)}" target="_blank" rel="noopener">Read more on Wikipedia</a>`;else sum='<p class="pmute">No short summary found for this spot.</p>'}
- return `<div class="pop"><h3>${esc(p.n)}</h3><p class="pfacts">${facts.slice(0,-1).map(esc).join(' · ')}<br><span class="pco">${esc(facts[facts.length-1])}</span></p>${p.note?`<p class="pnote">${esc(p.note)}</p>`:''}${sum}
+ return `<div class="pop"><h3>${esc(p.n)}</h3>${order}<p class="pfacts">${facts.slice(0,-1).map(esc).join(' · ')}<br><span class="pco">${esc(facts[facts.length-1])}</span></p>${p.note?`<p class="pnote">${esc(p.note)}</p>`:''}${sum}
  <div class="pbtns"><a class="btn sm pri" href="https://www.google.com/search?q=${q}" target="_blank" rel="noopener">Search on Google</a><a class="btn sm" href="https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lon}" target="_blank" rel="noopener">Google Maps</a>
  ${isHome?'':`<button class="btn sm${p.visited?' von':''}" data-pa="visit">${p.visited?'✓ Visited':'Mark visited'}</button>`}<button class="btn sm" data-pa="replace">Change place</button><button class="btn sm" data-pa="move">Move pin</button>${isHome?'':`<button class="btn sm" data-pa="home">Make home</button>`}<button class="btn sm" data-pa="remove">Remove</button></div></div>`}
 function openInfo(p){closeCard();infoFor=p;offer=null;openCard(infoHtml(p,wikiCache[p.n+p.lat]),[p.lat,p.lon]);
@@ -1270,6 +1277,9 @@ function replSearch(v){repl=search(v).slice(0,5);replList();clearTimeout(rqT);
 function popAction(a,el){if(a==='add'||a==='addbase')return commitOffer(a==='addbase');const p=infoFor;if(!p)return;
  if(a==='replace'){repl=[];popup.setContent(`<div class="pop"><h3>Change ${esc(p.n)}</h3><input class="rq" type="search" placeholder="New place name" aria-label="New place name" autocomplete="off"><div class="rres"></div><p class="pto">Or use Move pin to tap the exact spot.</p><div class="pbtns"><button class="btn sm" data-pa="move">Move pin</button><button class="btn sm" data-pa="back">Back</button></div></div>`);
   setTimeout(()=>{const i=popup.getElement().querySelector('.rq');i&&i.focus()},30);return}
+ if(a==='earlier'||a==='later'){const t=trip(),f=findP(p);if(!f||f.i<0)return;const g=f.g,k=t.groups.indexOf(g),up=a==='earlier';let tg=g,j=up?f.i-1:f.i+2;
+  if(j<0){if(k===0)return;tg=t.groups[k-1];j=tg.stops.length}else if(j>g.stops.length){if(k===t.groups.length-1)return;tg=t.groups[k+1];j=0}
+  moveStop(g,f.i,tg,j);render();popup.setContent(infoHtml(p,wikiCache[p.n+p.lat]));if(tg!==g)toast(`Moved to ${tg.name}`);return}
  if(a==='visit'){if(p.visited)delete p.visited;else p.visited=true;render();popup.setContent(infoHtml(p,wikiCache[p.n+p.lat]));return}
  if(a==='back'){popup.setContent(infoHtml(p,wikiCache[p.n+p.lat]));return}
  if(a==='pick'){const c=repl[+el.dataset.k];if(!c)return;const old=p.n;Object.assign(p,{n:c.n,c:c.c,lat:+(+c.lat).toFixed(4),lon:+(+c.lon).toFixed(4)});closeCard();render();map.setView([p.lat,p.lon],Math.max(map.getZoom(),8));toast(`${old} → ${p.n}`);return}const f=findP(p);closeCard();if(!f)return;const g=f.g;
