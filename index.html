@@ -977,6 +977,8 @@ body{font-size:14px}
 .pin.moving{outline:3px solid var(--acc);outline-offset:3px;animation:pinwob 1s ease-in-out infinite alternate}
 @keyframes pinwob{to{outline-offset:6px}}
 @media(prefers-reduced-motion:reduce){.pin.moving{animation:none}}
+.gfix{display:flex;gap:6px;margin-top:4px}.gfix .gq{flex:1;min-width:0;font:14px Inter,sans-serif;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
+@media(max-width:800px){.gfix .gq{font-size:16px}}
 </style>
 </head>
 <body>
@@ -1414,21 +1416,38 @@ function gmBuild(){const run=++gmRun,lists=gmLists.filter(l=>l.on);gmTarget=list
  gmItems=lists.flatMap(l=>l.items.map(it=>{let cands=[];if(it.ll){const nc=nearCountry(it.ll);cands=[{n:it.title||(nc?'Spot near '+nc.n:'Pinned spot'),c:nc?nc.c:'',lat:+it.ll.lat.toFixed(5),lon:+it.ll.lon.toFixed(5),place:1,sub:nc?regionName(nc.c):'exact spot'}]}
   return{q:it.title||'Pinned spot',note:it.note,list:l.name,cands,sel:0,on:!!cands.length,busy:!cands.length,exact:!!it.ll}}));
  renderGM();gmShow($('gm').innerHTML);gmResolve(run)}
-async function gmLookup(x,known){let c=[];
- if(window.STANDALONE){const b=known.length?known.reduce((a,k)=>({lat:a.lat+k.lat/known.length,lon:a.lon+k.lon/known.length}),{lat:0,lon:0}):null;
-  try{const j=await withTimeout(fetch('https://photon.komoot.io/api/?limit=3&lang=en&q='+encodeURIComponent(x.q)+(b?`&lat=${b.lat.toFixed(3)}&lon=${b.lon.toFixed(3)}`:'')).then(r=>r.json()),12000,'search');
-   c=(j.features||[]).map(f=>{const p=f.properties,[lon,lat]=f.geometry.coordinates,nm=p.name||p.street||x.q;return{n:x.q||nm,sub:[nm!==x.q?nm:'',p.city&&p.city!==nm?p.city:'',p.country].filter(Boolean).join(', '),c:(p.countrycode||'').toUpperCase(),lat:+(+lat).toFixed(5),lon:+(+lon).toFixed(5),place:1}})}catch(e){}}
- if(!c.length){const k=norm(x.q),m=cities.find(ct=>ct.k===k);if(m)c=[m]}return c}
-async function gmResolve(run){const known=gmItems.filter(x=>x.cands.length).map(x=>x.cands[0]),queue=gmItems.filter(x=>!x.cands.length);let last=0;
- const worker=async()=>{while(queue.length){if(run!==gmRun)return;const x=queue.shift(),c=await gmLookup(x,known);if(run!==gmRun)return;
-  x.cands=c;x.on=c.length>0;x.busy=false;if(c[0])known.push(c[0]);if(Date.now()-last>300||!queue.length){last=Date.now();renderGM()}}};
- await Promise.all([worker(),worker(),worker()]);if(run===gmRun)renderGM()}
+/* geocoding for imported titles: Photon first (with retries), then Nominatim (1 request/second) */
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function cleanTitle(t){return t.replace(/\([^)]*\)/g,' ').split(/\s[-–|·]\s/)[0].replace(/\s+/g,' ').trim()}
+async function getJSON(url,tries=3){for(let k=0;k<tries;k++){try{const r=await withTimeout(fetch(url),12000,'search');
+  if(r.ok)return await r.json();if(r.status!==429&&r.status<500)return null}catch(e){}await sleep(1200*2**k)}throw new Error('failed')}
+async function photonQ(q,b){const j=await getJSON('https://photon.komoot.io/api/?limit=3&q='+encodeURIComponent(q)+(b?`&lat=${b.lat.toFixed(3)}&lon=${b.lon.toFixed(3)}&location_bias_scale=0.4`:''));
+ return((j&&j.features)||[]).map(f=>{const p=f.properties,[lon,lat]=f.geometry.coordinates,nm=p.name||p.street||q;return{nm,sub:[p.city&&p.city!==nm?p.city:'',p.country].filter(Boolean).join(', '),c:(p.countrycode||'').toUpperCase(),lat:+(+lat).toFixed(5),lon:+(+lon).toFixed(5)}})}
+let nomNext=0;
+async function nominatimQ(q,b){const wait=Math.max(0,nomNext-Date.now());nomNext=Date.now()+wait+1100;await sleep(wait);
+ const vb=b?`&viewbox=${b.lon-1.5},${b.lat+1.5},${b.lon+1.5},${b.lat-1.5}`:'';
+ const j=await getJSON('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=3&addressdetails=1&accept-language=en&q='+encodeURIComponent(q)+vb,2);
+ return(j||[]).map(o=>{const a=o.address||{},nm=o.name||(o.display_name||q).split(',')[0];return{nm,sub:[a.city||a.town||a.village||'',a.country||''].filter(x=>x&&x!==nm).join(', '),c:(a.country_code||'').toUpperCase(),lat:+(+o.lat).toFixed(5),lon:+(+o.lon).toFixed(5)}})}
+function biasOf(known){if(!known.length)return null;const k=known.slice(-25);return k.reduce((a,p)=>({lat:a.lat+p.lat/k.length,lon:a.lon+p.lon/k.length}),{lat:0,lon:0})}
+async function gmLookup(x,known){const title=x.q,qs=[...new Set([title,cleanTitle(title)])].filter(Boolean),b=biasOf(known);let res=[],failed=0;
+ if(window.STANDALONE){
+  for(const q of qs){for(const bb of b?[b,null]:[null]){try{res=await photonQ(q,bb)}catch(e){failed++}if(res.length)break}if(res.length)break}
+  if(!res.length)for(const q of qs){try{res=await nominatimQ(q,b)}catch(e){failed++}if(res.length)break}}
+ let c=res.map(o=>({n:x.orig||title,sub:[o.nm!==title?o.nm:'',o.sub].filter(Boolean).join(', '),c:o.c,lat:o.lat,lon:o.lon,place:1}));
+ if(b)c.sort((p,q)=>dist(p,b)-dist(q,b));
+ if(!c.length){const k=norm(cleanTitle(title)),m=cities.find(ct=>ct.k===k);if(m)c=[m]}
+ return{c,failed:!c.length&&failed>0}}
+async function gmResolve(run,only){const known=gmItems.filter(x=>x.cands.length).map(x=>x.cands[0]);const queue=only||gmItems.filter(x=>!x.cands.length);let last=0;
+ queue.forEach(x=>{x.busy=true;x.failed=false});renderGM();
+ const worker=async()=>{while(queue.length){if(run!==gmRun)return;const x=queue.shift(),{c,failed}=await gmLookup(x,known);if(run!==gmRun)return;
+  x.cands=c;x.sel=0;x.on=c.length>0;x.busy=false;x.failed=failed;if(c[0])known.push(c[0]);if(Date.now()-last>400||!queue.length){last=Date.now();renderGM()}}};
+ await Promise.all([worker(),worker()]);if(run===gmRun)renderGM()}
 function renderGM(){const G=trip().groups,lists=[...new Set(gmItems.map(x=>x.list))],n=gmItems.filter(x=>x.on&&x.cands.length).length,busy=gmItems.filter(x=>x.busy).length,miss=gmItems.filter(x=>!x.busy&&!x.cands.length).length;
  const tgt=`<select class="gsel gmt" aria-label="Import into">${lists.length>1?`<option value="__perlist"${gmTarget==='__perlist'?' selected':''}>A new group per list</option>`:''}<option value="__new"${gmTarget==='__new'?' selected':''}>New group “${esc(lists[0]||'Imported')}”</option>${G.map(g=>`<option value="${g.id}"${gmTarget===g.id?' selected':''}>${esc(g.name)}</option>`).join('')}</select>`;
- gmPaint(`<p><b>${gmItems.length} place${gmItems.length===1?'':'s'}</b> from ${lists.map(esc).join(', ')}${busy?` · <span class="smute">finding ${busy}…</span>`:''}${miss?` · <span class="ioerr">${miss} not found</span>`:''}</p>
+ gmPaint(`<p><b>${gmItems.length} place${gmItems.length===1?'':'s'}</b> from ${lists.map(esc).join(', ')}${busy?` · <span class="smute">finding ${busy}…</span>`:''}${miss?` · <span class="ioerr">${miss} not found</span>`:''}</p>${miss&&!busy&&window.STANDALONE?`<div class="bacts"><button class="btn sm" data-gm="retry">Search again for ${miss} missing</button></div>`:''}
  ${!window.STANDALONE&&gmItems.some(x=>!x.exact)?'<p class="smute">Google list files have no coordinates, and this version can only look up city names. Open the hosted version to find shops, hotels and sights.</p>':''}
- <div class="gmrows">${gmItems.map((x,i)=>`<div class="brow"><input type="checkbox" data-gi="${i}" ${x.on?'checked':''} ${x.cands.length?'':'disabled'} aria-label="Include ${esc(x.q)}"><div><div class="bq">${esc(x.q)}${lists.length>1?` <span class="smute">· ${esc(x.list)}</span>`:''}${x.note?` <span class="smute">· ${esc(x.note.slice(0,60))}</span>`:''}</div>
-  ${x.cands.length?(x.exact?`<div class="bmiss">✓ ${esc(x.cands[0].sub||'')} <span class="smute">exact spot</span></div>`:`<select data-gi="${i}" aria-label="Match for ${esc(x.q)}">${x.cands.map((c,j)=>`<option value="${j}"${j===x.sel?' selected':''}>${esc(candLabel(c))}</option>`).join('')}</select>`):`<div class="bmiss">${x.busy?'Searching…':'Not found. Add it by search or on the map'}</div>`}</div></div>`).join('')}</div>
+ <div class="gmrows">${gmItems.map((x,i)=>`<div class="brow"><input type="checkbox" data-gi="${i}" ${x.on?'checked':''} ${x.cands.length?'':'disabled'} aria-label="Include ${esc(x.q)}"><div><div class="bq">${esc(x.orig||x.q)}${lists.length>1?` <span class="smute">· ${esc(x.list)}</span>`:''}${x.note?` <span class="smute">· ${esc(x.note.slice(0,60))}</span>`:''}</div>
+  ${x.cands.length?(x.exact?`<div class="bmiss">✓ ${esc(x.cands[0].sub||'')} <span class="smute">exact spot</span></div>`:`<select data-gi="${i}" aria-label="Match for ${esc(x.q)}">${x.cands.map((c,j)=>`<option value="${j}"${j===x.sel?' selected':''}>${esc(candLabel(c))}</option>`).join('')}</select>`):(x.busy?`<div class="bmiss">Searching…</div>`:`<div class="bmiss ${x.failed?'ioerr':''}">${x.failed?'Search service did not answer.':'Not found.'} Edit the name and search again:</div><div class="gfix"><input class="gq" data-gi="${i}" value="${esc(x.q)}" aria-label="Search text for ${esc(x.q)}"><button class="btn sm" data-gm="one" data-gi="${i}">Search</button></div>`)}</div></div>`).join('')}</div>
  <p class="pto">Into ${tgt}</p><div class="bacts"><button class="btn sm pri" data-gm="add" ${n?'':'disabled'}>Add ${n} place${n===1?'':'s'}</button><button class="btn sm" data-gm="close">Cancel</button></div>`)}
 function gmAdd(){const t=trip(),made={};let n=0;
  const groupFor=list=>{if(gmTarget!=='__new'&&gmTarget!=='__perlist')return grp(gmTarget)||act();const key=gmTarget==='__new'?'__one':list;
@@ -1439,8 +1458,11 @@ $('gmOpen').addEventListener('click',()=>{gmShow(`<p><b>Import from Google Maps<
  <div class="bacts"><button class="btn sm pri" data-gm="pick">Choose file</button><a class="btn sm" href="https://takeout.google.com/" target="_blank" rel="noopener">Open Google Takeout</a><button class="btn sm" data-gm="close">Cancel</button></div>`)});
 $('gmFile').addEventListener('change',e=>{const fs=[...e.target.files];e.target.value='';if(fs.length)gmFiles(fs)});
 $('gm').addEventListener('click',e=>{const b=e.target.closest('[data-gm]');if(!b)return;const a=b.dataset.gm;
+ if(a==='retry'){gmResolve(gmRun,gmItems.filter(x=>!x.cands.length));return}
+ if(a==='one'){const x=gmItems[+b.dataset.gi],inp=$('gm').querySelector(`.gq[data-gi="${b.dataset.gi}"]`);if(!x||!inp)return;const t=inp.value.trim();if(!t)return;x.orig=x.orig||x.q;x.q=t;gmResolve(gmRun,[x]);return}
  if(a==='close'){gmRun++;gmItems=[];gmLists=[];gmShow('')}else if(a==='pick')$('gmFile').click();else if(a==='build')gmBuild();else if(a==='add')gmAdd()});
-$('gm').addEventListener('change',e=>{const el=e.target;
+$('gm').addEventListener('keydown',e=>{if(e.target.classList.contains('gq')&&e.key==='Enter'){e.preventDefault();const b=$('gm').querySelector(`[data-gm=one][data-gi="${e.target.dataset.gi}"]`);b&&b.click()}});
+$('gm').addEventListener('change',e=>{if(e.target.classList.contains('gq'))return;const el=e.target;
  if(el.dataset.gl!=null){gmLists[+el.dataset.gl].on=el.checked;return}
  if(el.classList.contains('gmt')){gmTarget=el.value;return}
  const x=gmItems[+el.dataset.gi];if(!x)return;if(el.type==='checkbox')x.on=el.checked;else x.sel=+el.value;renderGM()});
